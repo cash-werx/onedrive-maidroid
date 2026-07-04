@@ -73,7 +73,13 @@ Review these outputs before moving anything:
 - `duplicates.csv`
 - `move_plan.csv`
 
-When satisfied, execute the move plan:
+When satisfied, do a dry run first to confirm the intended destinations without touching any files:
+
+```powershell
+python execute_move_plan.py --dry-run
+```
+
+Then execute for real:
 
 ```powershell
 python execute_move_plan.py
@@ -87,23 +93,33 @@ Then inspect:
 
 ### `inventory_onedrive.py`
 
-Scans all files and folders under the configured OneDrive root and exports metadata including name, full path, parent folder, extension, folder flag, size, modified time, created time, and any access error.
+Scans all files and folders under the configured OneDrive root and exports metadata including name, full path, parent folder, extension, folder flag, size, modified time, created time, and any access error. Errors get the same schema as successful rows, so downstream scripts never see ragged columns.
+
+Options: `--root PATH`, `--output BASENAME` (default `onedrive_inventory`).
 
 ### `build_folder_map.py`
 
 Creates a simple tree-style text representation of the folder structure beneath the OneDrive root.
 
+Options: `--root PATH`, `--output FILE` (default `folder_map.txt`).
+
 ### `analyze_extensions.py`
 
 Reads the generated inventory and summarizes file counts by extension.
 
+Options: `--input FILE` (default `onedrive_inventory.csv`), `--output FILE` (default `extension_summary.csv`), `--top N` (default `50`).
+
 ### `find_duplicates.py`
 
-Groups files by size, hashes candidates with SHA256, and exports confirmed duplicate groups.
+Groups files by size, then narrows candidates with a fast partial hash (first 64KB) before running a full SHA256 on whatever's left — avoids reading entire large files that can be ruled out early. Hashing runs on a thread pool with progress logged periodically. Files that fail to hash are written to `duplicate_hash_errors.csv` instead of being silently dropped.
+
+Options: `--root PATH`, `--output FILE` (default `duplicates.csv`), `--errors-output FILE` (default `duplicate_hash_errors.csv`).
 
 ### `generate_move_plan.py`
 
-Builds a proposed move plan based on extension rules without moving any files.
+Builds a proposed move plan based on extension rules without moving any files. Every eligible file gets a plan entry — same-named files from different folders are both included; collision-safe renaming happens at execution time, not here.
+
+Options: `--input FILE` (default `onedrive_inventory.csv`), `--output FILE` (default `move_plan.csv`).
 
 Current default classifications:
 
@@ -119,7 +135,9 @@ Current default classifications:
 
 ### `execute_move_plan.py`
 
-Creates destination folders as needed, renames on collision, moves files, and writes a results log.
+Creates destination folders as needed, renames on collision (`name_1.ext`, `name_2.ext`, ...), moves files, and writes a results log.
+
+Options: `--root PATH`, `--plan FILE` (default `move_plan.csv`), `--output FILE` (default `move_results.csv`), `--dry-run` (log intended moves without touching any files).
 
 ## Safety Notes
 
@@ -132,15 +150,18 @@ Creates destination folders as needed, renames on collision, moves files, and wr
 ## Customization
 
 The OneDrive root path lives in a single place, `config.py`, defaulting to
-`C:\Users\codya\OneDrive`. Override it without editing code by setting the
-`ONEDRIVE_ROOT` environment variable before running any script:
+`C:\Users\codya\OneDrive`. Override it two ways, without editing code:
 
 ```powershell
+# Environment variable (applies to every script run)
 $env:ONEDRIVE_ROOT = "D:\OneDrive"
 python inventory_onedrive.py
+
+# Per-run CLI flag (takes priority over the env var)
+python inventory_onedrive.py --root "D:\OneDrive"
 ```
 
-To change move behavior, edit the extension-to-destination rules in `generate_move_plan.py`.
+To change move behavior, edit `DESTINATION_RULES` in `generate_move_plan.py`.
 
 ## Suggested `.gitignore`
 

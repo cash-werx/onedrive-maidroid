@@ -1,132 +1,133 @@
+"""Detect duplicate files under the OneDrive root using a two-stage hash.
+
+Files are first grouped by size, then narrowed further by hashing just
+the first 64KB, and only genuinely remaining candidates get a full
+SHA256 hash. This avoids reading whole large files (video, archives)
+that can be ruled out from a small prefix.
+"""
+from __future__ import annotations
+
+import argparse
 import hashlib
+import logging
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
-from config import ROOT
+from config import get_root
 
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+log = logging.getLogger(__name__)
+
+CHUNK_SIZE = 65536
 PARTIAL_HASH_BYTES = 65536
+MAX_WORKERS = 8
 
 
-def hash_file(file, max_bytes=None):
+def hash_file(path: Path, max_bytes: Optional[int] = None) -> str:
     hasher = hashlib.sha256()
+    read = 0
 
-    with open(file, "rb") as f:
-
-        read = 0
-
-        while chunk := f.read(65536):
+    with open(path, "rb") as f:
+        while chunk := f.read(CHUNK_SIZE):
             hasher.update(chunk)
             read += len(chunk)
-
             if max_bytes is not None and read >= max_bytes:
                 break
 
     return hasher.hexdigest()
 
 
-size_groups = {}
-
-print("Grouping files by size...")
-
-for file in ROOT.rglob("*"):
-
-    if not file.is_file():
-        continue
-
+def safe_hash(path: Path, max_bytes: Optional[int] = None):
     try:
-        size = file.stat().st_size
-        size_groups.setdefault(size, []).append(file)
-
-    except Exception:
-        pass
-
-hash_errors = []
+        return path, hash_file(path, max_bytes=max_bytes), None
+    except OSError as e:
+        return path, None, str(e)
 
 
-def safe_hash(file, max_bytes=None):
-    try:
-        return file, hash_file(file, max_bytes=max_bytes), None
-    except Exception as e:
-        return file, None, str(e)
+def group_by_size(root: Path) -> dict[int, list[Path]]:
+    groups: dict[int, list[Path]] = {}
+
+    for file in root.rglob("*"):
+        if not file.is_file():
+            continue
+        try:
+            groups.setdefault(file.stat().st_size, []).append(file)
+        except OSError:
+            continue
+
+    return groups
 
 
-# Same-size files are only candidates for duplication. Before paying the
-# cost of hashing the full file (expensive for large videos/archives),
-# narrow candidates down using a hash of just the first chunk.
-candidates = [
-    file
-    for files in size_groups.values()
-    if len(files) > 1
-    for file in files
-]
+def narrow_candidates(
+    candidates: list[Path],
+    max_bytes: Optional[int],
+    label: str,
+    errors: list[dict],
+) -> dict[str, list[Path]]:
+    groups: dict[str, list[Path]] = {}
 
-print(f"Partial-hashing {len(candidates)} same-size candidate files...")
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        results = pool.map(lambda p: safe_hash(p, max_bytes=max_bytes), candidates)
 
-partial_groups = {}
+        for i, (path, digest, error) in enumerate(results, start=1):
+            if error is not None:
+                errors.append({"file": str(path), "error": error})
+            else:
+                groups.setdefault(digest, []).append(path)
 
-with ThreadPoolExecutor(max_workers=8) as pool:
-    for i, (file, digest, error) in enumerate(
-        pool.map(lambda f: safe_hash(f, max_bytes=PARTIAL_HASH_BYTES), candidates),
-        start=1
-    ):
-        if error is not None:
-            hash_errors.append({"file": str(file), "error": error})
-        else:
-            partial_groups.setdefault(digest, []).append(file)
+            if i % 500 == 0:
+                log.info("%s: %d/%d", label, i, len(candidates))
 
-        if i % 500 == 0:
-            print(f"  partial-hashed {i}/{len(candidates)}")
+    return groups
 
-full_candidates = [
-    file
-    for files in partial_groups.values()
-    if len(files) > 1
-    for file in files
-]
 
-print(f"Full-hashing {len(full_candidates)} remaining candidate files...")
+def find_duplicates(root: Path) -> tuple[pd.DataFrame, list[dict]]:
+    errors: list[dict] = []
 
-duplicates = {}
+    size_groups = group_by_size(root)
+    candidates = [f for files in size_groups.values() if len(files) > 1 for f in files]
+    log.info("Partial-hashing %d same-size candidate files...", len(candidates))
 
-with ThreadPoolExecutor(max_workers=8) as pool:
-    for i, (file, digest, error) in enumerate(
-        pool.map(safe_hash, full_candidates),
-        start=1
-    ):
-        if error is not None:
-            hash_errors.append({"file": str(file), "error": error})
-        else:
-            duplicates.setdefault(digest, []).append(file)
+    partial_groups = narrow_candidates(candidates, PARTIAL_HASH_BYTES, "partial-hashed", errors)
 
-        if i % 500 == 0:
-            print(f"  full-hashed {i}/{len(full_candidates)}")
+    full_candidates = [f for files in partial_groups.values() if len(files) > 1 for f in files]
+    log.info("Full-hashing %d remaining candidate files...", len(full_candidates))
 
-if hash_errors:
-    pd.DataFrame(hash_errors).to_csv(
-        "duplicate_hash_errors.csv",
-        index=False
-    )
-    print(f"Files skipped due to hashing errors: {len(hash_errors)}")
+    full_groups = narrow_candidates(full_candidates, None, "full-hashed", errors)
 
-rows = []
+    rows = [
+        {"hash": digest, "size_bytes": f.stat().st_size, "file": str(f)}
+        for digest, files in full_groups.items()
+        if len(files) > 1
+        for f in files
+    ]
 
-for digest, files in duplicates.items():
+    return pd.DataFrame(rows), errors
 
-    if len(files) > 1:
-        for file in files:
 
-            rows.append({
-                "hash": digest,
-                "size_bytes": file.stat().st_size,
-                "file": str(file)
-            })
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", help="OneDrive root path (overrides ONEDRIVE_ROOT env var)")
+    parser.add_argument("--output", default="duplicates.csv")
+    parser.add_argument("--errors-output", default="duplicate_hash_errors.csv")
+    args = parser.parse_args()
 
-df = pd.DataFrame(rows)
+    root = get_root(args.root)
+    if not root.exists():
+        raise SystemExit(f"Root path does not exist: {root}")
 
-df.to_csv(
-    "duplicates.csv",
-    index=False
-)
+    df, errors = find_duplicates(root)
+    df.to_csv(args.output, index=False)
 
-print(f"Duplicate records exported: {len(df)}")
+    if errors:
+        pd.DataFrame(errors).to_csv(args.errors_output, index=False)
+        log.info("Files skipped due to hashing errors: %d", len(errors))
+
+    log.info("Duplicate records exported: %d", len(df))
+
+
+if __name__ == "__main__":
+    main()
