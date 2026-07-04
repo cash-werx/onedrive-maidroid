@@ -1,0 +1,11 @@
+# Generated reports
+*.csv
+*.xlsx
+folder_map.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
