@@ -5,7 +5,6 @@ df = pd.read_csv(
 )
 
 moves = []
-seen_targets = set()
 
 for _, row in df.iterrows():
 
@@ -69,18 +68,6 @@ for _, row in df.iterrows():
     if destination is None:
         continue
 
-    target_key = (
-        destination,
-        filename
-    )
-
-    if target_key in seen_targets:
-        continue
-
-    seen_targets.add(
-        target_key
-    )
-
     moves.append({
         "current_path":
             row["full_path"],
@@ -94,11 +81,6 @@ plan = pd.DataFrame(moves)
 
 plan.to_csv(
     "move_plan.csv",
-    index=False
-)
-
-plan.to_csv(
-    "backup_plan.csv",
     index=False
 )
 

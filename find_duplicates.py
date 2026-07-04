@@ -1,8 +1,7 @@
-from pathlib import Path
 import hashlib
 import pandas as pd
 
-ROOT = Path(r"C:\Users\codya\OneDrive")
+from config import ROOT
 
 size_groups = {}
 
@@ -21,6 +20,7 @@ for file in ROOT.rglob("*"):
         pass
 
 duplicates = {}
+hash_errors = []
 
 print("Hashing candidate duplicate files...")
 
@@ -47,8 +47,18 @@ for size, files in size_groups.items():
                 []
             ).append(file)
 
-        except Exception:
-            pass
+        except Exception as e:
+            hash_errors.append({
+                "file": str(file),
+                "error": str(e)
+            })
+
+if hash_errors:
+    pd.DataFrame(hash_errors).to_csv(
+        "duplicate_hash_errors.csv",
+        index=False
+    )
+    print(f"Files skipped due to hashing errors: {len(hash_errors)}")
 
 rows = []
 

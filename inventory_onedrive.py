@@ -1,8 +1,7 @@
-from pathlib import Path
 import pandas as pd
 from datetime import datetime
 
-ROOT = Path(r"C:\Users\codya\OneDrive")
+from config import ROOT
 
 inventory = []
 
@@ -24,7 +23,8 @@ for item in ROOT.rglob("*"):
             ),
             "created": datetime.fromtimestamp(
                 stat.st_ctime
-            )
+            ),
+            "error": ""
         })
 
     except Exception as e:
@@ -32,6 +32,12 @@ for item in ROOT.rglob("*"):
         inventory.append({
             "name": item.name,
             "full_path": str(item),
+            "parent_folder": str(item.parent),
+            "extension": "",
+            "is_folder": False,
+            "size_bytes": 0,
+            "modified": None,
+            "created": None,
             "error": str(e)
         })
 

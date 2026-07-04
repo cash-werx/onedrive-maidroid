@@ -1,6 +1,4 @@
-from pathlib import Path
-
-ROOT = Path(r"C:\Users\codya\OneDrive")
+from config import ROOT
 
 with open(
     "folder_map.txt",

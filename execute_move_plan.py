@@ -2,9 +2,7 @@ import pandas as pd
 from pathlib import Path
 import shutil
 
-ROOT = Path(
-    r"C:\Users\codya\OneDrive"
-)
+from config import ROOT
 
 plan = pd.read_csv(
     "move_plan.csv"

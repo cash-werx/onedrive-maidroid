@@ -24,6 +24,7 @@ Target environment:
 ## Project Files
 
 ```text
+config.py
 inventory_onedrive.py
 build_folder_map.py
 analyze_extensions.py
@@ -40,8 +41,8 @@ onedrive_inventory.xlsx
 folder_map.txt
 extension_summary.csv
 duplicates.csv
+duplicate_hash_errors.csv
 move_plan.csv
-backup_plan.csv
 move_results.csv
 ```
 
@@ -130,7 +131,14 @@ Creates destination folders as needed, renames on collision, moves files, and wr
 
 ## Customization
 
-To use a different OneDrive path, update the `ROOT` value at the top of each script.
+The OneDrive root path lives in a single place, `config.py`, defaulting to
+`C:\Users\codya\OneDrive`. Override it without editing code by setting the
+`ONEDRIVE_ROOT` environment variable before running any script:
+
+```powershell
+$env:ONEDRIVE_ROOT = "D:\OneDrive"
+python inventory_onedrive.py
+```
 
 To change move behavior, edit the extension-to-destination rules in `generate_move_plan.py`.
 
