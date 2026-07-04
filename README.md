@@ -1,4 +1,4 @@
-# OneDrive-maidroid
+# OneDrive Organization & Reorganization Toolkit
 
 A Python toolkit for auditing, analyzing, and reorganizing a locally synced OneDrive folder on Windows.
 
